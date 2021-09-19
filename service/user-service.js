@@ -4,6 +4,7 @@ const uuid = require("uuid");
 const mailService = require("./mail-service");
 const tokenService = require("./token-service");
 const UserDto = require("../dtos/user-dtos");
+const ApiError = require("../exceptions/api-error");
 
 class UserService {
   /**
@@ -19,7 +20,8 @@ class UserService {
     try {
       // ? If we had user with current email, throw new error
       if (candidate) {
-        throw new Error(`User with email ${email} already exist`);
+        // User already exist in DB === true ? BadRequest : Something else
+        throw ApiError.BadRequest(`User with email ${email} already exist`);
       }
 
       const hashedPassword = await bcrypt.hash(password, 3);
@@ -31,7 +33,8 @@ class UserService {
         userAge,
         activationLink
       });
-      await mailService.sendActivationMsg(email, activationLink);
+
+      await mailService.sendActivationMsg(email, `${process.env.API_URL}/api/v1/activate/${activationLink}`);
       // ? Here we create user dto which has needed properties for token payload
       const userDto = new UserDto(user);
       // ? Here we get our tokens | access && refresh
@@ -42,6 +45,15 @@ class UserService {
     } catch (error) {
       console.error(error);
     }
+  }
+
+  async activate(activationLink) {
+    const user = await UserModel.findOne({activationLink})
+
+    if (!user) throw ApiError.BadRequest("Incorrect link to activate your account");
+
+    user.isActivated = true;
+    return user.save();
   }
 }
 
