@@ -8,6 +8,20 @@ const ApiError = require("../exceptions/api-error");
 
 class UserService {
   /**
+   * @param {Object} user
+   * @returns {Object}
+   */
+  async setUserData(user) {
+    // ? Here we create user dto which has needed properties for token payload
+    const userDto = new UserDto(user);
+    // ? Here we get our tokens | access && refresh
+    const tokens = tokenService.generateTokens({...userDto});
+    // ? Save tokens in DB
+    await tokenService.saveToken(userDto.id, tokens.refreshToken)
+
+    return { ...tokens, user: userDto }
+  }
+  /**
    * @param {String} email 
    * @param {String} password 
    * @param {String} userName 
@@ -35,18 +49,16 @@ class UserService {
       });
 
       await mailService.sendActivationMsg(email, `${process.env.API_URL}/api/v1/activate/${activationLink}`);
-      // ? Here we create user dto which has needed properties for token payload
-      const userDto = new UserDto(user);
-      // ? Here we get our tokens | access && refresh
-      const tokens = tokenService.generateTokens({...userDto});
-      await tokenService.saveToken(userDto.id, tokens.refreshToken)
-
-      return { ...tokens, user: userDto }
+      return await this.setUserData(user);
     } catch (error) {
       console.error(error);
     }
   }
 
+  /**
+   * @param {String} activationLink
+   * @returns {Promise<*>}
+   */
   async activate(activationLink) {
     const user = await UserModel.findOne({activationLink})
 
@@ -54,6 +66,60 @@ class UserService {
 
     user.isActivated = true;
     return user.save();
+  }
+
+  /**
+   * @param {String} email
+   * @param {String} password
+   * @returns {Object}
+   */
+  async login(email, password) {
+    // ? Check by email
+    const user = await UserModel.findOne({email});
+    if (!user) {
+      throw ApiError.BadRequest("The user with current email isn't registered");
+    }
+
+    // ? Check by pass
+    const isPassEqual = await bcrypt.compare(password, user.password);
+    if (!isPassEqual) {
+      throw ApiError.BadRequest("Wrong password");
+    }
+
+    return await this.setUserData(user);
+  }
+
+  /**
+   * @param {String} refreshToken
+   * @returns {Promise<*>}
+   */
+  async logout(refreshToken) {
+    const token = await tokenService.removeToken(refreshToken);
+    return token;
+  }
+
+  /**
+   * @param {String} refreshToken
+   * @returns {Object}
+   */
+  async refresh(refreshToken) {
+    if (!refreshToken) {
+      throw ApiError.UnauthorizedError()
+    }
+
+    const userData = tokenService.validateRefreshToken(refreshToken);
+    const tokenFromDb = await tokenService.findToken(refreshToken);
+    if (!userData || !tokenFromDb) {
+      throw ApiError.UnauthorizedError();
+    }
+
+    const user = await UserModel.findById(userData.id);
+    return await this.setUserData(user);
+  }
+
+  async getAllUsers() {
+    const users = await UserModel.find();
+    return users;
   }
 }
 
